@@ -1,0 +1,247 @@
+from __future__ import annotations
+
+import random
+import inspect
+from pathlib import Path
+from typing import Iterable, List
+
+import numpy as np
+from PIL import Image, ImageFilter
+
+import config
+
+try:  # MoviePy <=1.0
+    from moviepy.editor import (
+        AudioFileClip,
+        VideoFileClip,
+        CompositeAudioClip,
+        TextClip,
+        CompositeVideoClip,
+        vfx,
+        afx,
+    )
+except ModuleNotFoundError:  # MoviePy >=2.0
+    from moviepy import (
+        AudioFileClip,
+        VideoFileClip,
+        CompositeAudioClip,
+        TextClip,
+        CompositeVideoClip,
+        vfx,
+        afx,
+    )
+
+from moviepy.video.tools.subtitles import SubtitlesClip
+
+# FONT_CANDIDATES: List[str] = [
+#     "STHeiti",
+#     "Heiti TC",
+#     "Arial Unicode MS",
+#     "DejaVu Sans",
+#     "SimHei",
+#     "Microsoft YaHei",
+#     "PingFang SC",
+#     "Heiti SC",
+#     "WenQuanYi Zen Hei",
+#     "Noto Sans CJK SC",
+# ]
+FONT_CANDIDATES: List[str] = [
+    'STHeiti Bold',
+    'Heiti TC Bold',
+    'Arial Unicode MS Bold',
+    'DejaVu Sans Bold',
+    'SimHei',
+    'Microsoft YaHei Bold',
+    'PingFang SC Bold',
+    'Heiti SC Bold',
+    'WenQuanYi Zen Hei Bold',
+    'Noto Sans CJK SC Bold',
+]
+
+
+def _chinese_textclip_generator(width: int):
+    """Return a ``TextClip`` generator that handles MoviePy API changes."""
+
+    params = inspect.signature(TextClip.__init__).parameters
+    text_arg = "txt" if "txt" in params else "text"
+    fontsize_arg = None
+    if "fontsize" in params:
+        fontsize_arg = "fontsize"
+    elif "font_size" in params:
+        fontsize_arg = "font_size"
+
+    def _make_clip(txt: str, font: str | None) -> TextClip:
+        kwargs = {
+            text_arg: txt,
+            "color": "white",
+            "method": "caption",
+            "size": (width, None),
+            "stroke_color": "black",
+            "stroke_width": 2,
+        }
+        if font:
+            kwargs["font"] = font + ' bold'
+        # if fontsize_arg:
+        #     kwargs[fontsize_arg] = 50
+        kwargs[fontsize_arg] = 60
+        return TextClip(**kwargs)
+
+    def generator(txt: str) -> TextClip:
+        for font in FONT_CANDIDATES:
+            try:
+                return _make_clip(txt, font)
+            except Exception:
+                continue
+        return _make_clip(txt, None)
+
+    return generator
+
+
+def _make_subtitles_clip(srt_path: str | Path, width: int) -> SubtitlesClip:
+    """Create a ``SubtitlesClip`` ensuring compatibility across MoviePy versions."""
+    kwargs = {"make_textclip": _chinese_textclip_generator(width)}
+    if "encoding" in inspect.signature(SubtitlesClip.__init__).parameters:
+        kwargs["encoding"] = "utf-8"
+    return SubtitlesClip(str(srt_path), **kwargs)
+
+
+def _position_clip(subs: SubtitlesClip, position: tuple[str, float]) -> SubtitlesClip:
+    """Set subtitle position handling MoviePy API differences."""
+    if hasattr(subs, "with_position"):
+        return subs.with_position(position)
+    return subs.set_position(position)
+
+
+VIDEO_EXTS: Iterable[str] = {".mp4", ".mov", ".mkv", ".avi", ".webm"}
+
+
+def get_audio_duration(audio_path: str | Path) -> float:
+    """Return the duration (in seconds) of an audio file."""
+    clip = AudioFileClip(str(audio_path))
+    duration = clip.duration
+    clip.close()
+    return duration
+
+
+def get_random_video(root_path: str | Path) -> Path:
+    """Recursively find a readable video file and return its path.
+
+    Some videos may be corrupted or incompatible with the installed FFMPEG
+    version. This helper attempts to open each candidate and read its first
+    frame, skipping any files that trigger an ``OSError``. If no usable videos
+    are found, a ``FileNotFoundError`` is raised.
+    """
+
+    root = Path(root_path).expanduser()
+    files = [p for p in root.rglob("*") if p.suffix.lower() in VIDEO_EXTS]
+    if not files:
+        raise FileNotFoundError(f"No video files found in {root}")
+
+    random.shuffle(files)
+    for path in files:
+        try:
+            clip = VideoFileClip(str(path))
+            # Access the first frame to ensure the file is readable.
+            clip.get_frame(0)
+            clip.close()
+            return path
+        except OSError:
+            # Skip unreadable files and try another candidate.
+            try:
+                clip.close()
+            except Exception:
+                pass
+            continue
+
+    raise OSError(f"No readable video files found in {root}")
+
+
+def adjust_speed_for_non_football(clip: VideoFileClip, target_duration: float) -> VideoFileClip:
+    """Adjust clip speed so its duration matches target_duration.
+
+    If the adjusted clip is still longer, drop the first few frames.
+    """
+    rate = min(clip.duration / target_duration, config.max_speedup)
+    new_clip = clip.fx(vfx.speedx, rate)
+    if new_clip.duration > target_duration:
+        start = new_clip.duration - target_duration
+        new_clip = new_clip.subclip(start)
+    return new_clip
+
+
+def random_subclip_for_football(clip: VideoFileClip, duration: float) -> VideoFileClip:
+    """Return a random subclip with the given duration from a football clip."""
+    if clip.duration <= duration:
+        return clip.subclip(0, duration)
+    start = random.uniform(0, clip.duration - duration)
+    return clip.subclip(start, start + duration)
+
+
+def mix_audio_tracks(voice_path: str | Path, bg_music_dir: str | Path) -> AudioFileClip:
+    """Mix the voice track with a randomly selected background music track."""
+    voice = AudioFileClip(str(voice_path))
+    bg_dir = Path(bg_music_dir)
+    music_files = [
+        p
+        for p in bg_dir.rglob("*")
+        if p.suffix.lower() in {".mp3", ".wav"}
+    ]
+    if not music_files:
+        raise FileNotFoundError(f"No background music found in {bg_dir}")
+    bg_path = random.choice(music_files)
+    bgm = AudioFileClip(str(bg_path)).volumex(0.65)
+    if bgm.duration > voice.duration:
+        start = random.uniform(0, bgm.duration - voice.duration)
+        bgm = bgm.subclip(start, start + voice.duration)
+    else:
+        bgm = bgm.fx(afx.audio_loop, duration=voice.duration)
+        bgm = bgm.set_duration(voice.duration)
+    mixed = CompositeAudioClip([bgm, voice])
+    return mixed
+
+
+def blur_region(
+    clip: VideoFileClip, y1_ratio: float, y2_ratio: float, blur_size: int
+) -> VideoFileClip:
+    """Blur a horizontal band of the clip defined by vertical ratios.
+
+    The region spans the full width of the clip and is bounded vertically by
+    ``y1_ratio`` and ``y2_ratio`` (values between 0.0 and 1.0).
+    """
+    y1 = int(clip.h * y1_ratio)
+    y2 = int(clip.h * y2_ratio)
+
+    def blur_frame(frame: np.ndarray) -> np.ndarray:
+        """Blur the specified horizontal band within a frame."""
+        pil_img = Image.fromarray(frame)
+        band = pil_img.crop((0, y1, clip.w, y2))
+        band = band.filter(ImageFilter.GaussianBlur(radius=blur_size))
+        pil_img.paste(band, (0, y1))
+        return np.array(pil_img)
+
+    return clip.fl_image(blur_frame)
+
+
+def add_football_subtitles(
+    clip: VideoFileClip, srt_path: str | Path, y1_ratio: float, y2_ratio: float
+) -> VideoFileClip:
+    """Add subtitles centered over the blurred region for football clips."""
+    width = clip.w
+    subs = _make_subtitles_clip(srt_path, width)
+    y_pixels = clip.h * (y1_ratio + y2_ratio - 0.1) / 2
+    subs = _position_clip(subs, ("center", y_pixels))
+    return CompositeVideoClip([clip, subs])
+
+
+def add_subtitles(
+    clip: VideoFileClip,
+    srt_path: str | Path,
+    upper: float,
+    lower: float,
+) -> VideoFileClip:
+    """Add subtitles centered between the given height ratios."""
+    width = clip.w
+    subs = _make_subtitles_clip(srt_path, width)
+    h_pixels = clip.h * (upper + lower) / 2
+    subs = _position_clip(subs, ("center", h_pixels))
+    return CompositeVideoClip([clip, subs])

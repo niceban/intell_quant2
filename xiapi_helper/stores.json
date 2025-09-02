@@ -1,0 +1,14 @@
+{
+  "default_headless": false,
+  "default_target_to_pick": 30,
+  "stores": [
+    {
+      "name": "A",
+      "cookie_file": "./cookies/shopee_shop1.json"
+    },
+    {
+      "name": "B",
+      "cookie_file": "cookies_storeB.json"
+    }
+  ]
+}
