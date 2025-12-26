@@ -1,4 +1,3 @@
-
 import subprocess
 import sys
 from pathlib import Path
@@ -29,9 +28,9 @@ def main():
         print("Integrated features found in data/A. Skipping generation.")
         
     # 2. Run Training (Full Mode)
-    print("Starting RL Training (FULL PRODUCTION MODE)...")
+    print("Starting RL Training (FULL PRODUCTION MODE - v-Final Spec)...")
     cmd = [
-        sys.executable, "-u", "exploring/train/train_loop.py",
+        sys.executable, "-u", "exploring/single_process_test.py",
         "--exp_name", "v4_nonlinear_scaled_final",
         "--num_envs", "1024",
         "--batch_size", "1024",

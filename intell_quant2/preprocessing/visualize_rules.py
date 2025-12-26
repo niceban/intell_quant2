@@ -13,6 +13,14 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 def apply_rules_and_sim(df):
     n = len(df)
+    
+    # Precompute week_id for immediate cancel logic (v-Final)
+    if not pd.api.types.is_datetime64_any_dtype(df['ts']):
+        df['ts'] = pd.to_datetime(df['ts'])
+    
+    df['week_id'] = df['ts'].dt.isocalendar().year * 100 + df['ts'].dt.isocalendar().week
+    week_ids = df['week_id'].values
+
     # 1. Define Watch Period
     m_strict = (df['month_skdj_k_state'] > 0) & (df['month_skdj_d_state'] > 0) & \
                (df['month_macd_bar_state'] > 0) & (df['month_macd_dif_state'] > 0) & \
@@ -22,18 +30,21 @@ def apply_rules_and_sim(df):
     
     # 2. Opportunities
     buy_opp = watch_period & (df['week_skdj_d_state'] == 2)
+    buy_opp_vals = buy_opp.values
     
-    # Sell Opp Expansion
+    # Sell Opp Expansion (Sniper Logic)
     s_d = (df['week_skdj_d_state'] == -2)
     s_dea = (df['week_macd_dea_state'] == -2)
     s_water = (df['week_macd_dea_state'] < 0) & (df['week_macd_dif_state'] < 0) & (df['week_macd_bar_state'] < 0)
     sell_opp = s_d | s_dea | s_water
+    sell_opp_vals = sell_opp.values
     
     # Force Sell Condition
     # 6-line negative: skdj_d, skdj_k, macd_dif, macd_dea, macd_bar, ama
     force_sell_cond = (df['week_skdj_d_state'] < 0) & (df['week_skdj_k_state'] < 0) & \
                       (df['week_macd_dif_state'] < 0) & (df['week_macd_dea_state'] < 0) & (df['week_macd_bar_state'] < 0) & \
                       (df['week_ama_state'] < 0)
+    force_sell_vals = force_sell_cond.values
 
     # 3. Future Extremes
     prices = df['close'].values
@@ -43,6 +54,7 @@ def apply_rules_and_sim(df):
     # 4. Simulation
     holding = False
     entry_price = 0.0
+    entry_week_id = -1
     hold_days = 0
     trade_max_p = 0.0
     trade_max_dd = 0.0
@@ -73,14 +85,17 @@ def apply_rules_and_sim(df):
         if np.isfinite(max_5w[i]) and np.isfinite(min_5w[i]):
             term_val = ((max_5w[i] - p_t) - (p_t - min_5w[i])) / p_t
             
+        # CLAMP TERM (v-Final Spec)
+        term_val = max(-10.0, min(10.0, term_val))
         term_reward = term_val 
 
         if not holding:
-            if buy_opp[i]:
-                if random.random() < 0.8: # 80% Buy
+            if buy_opp_vals[i]:
+                if random.random() < 0.8: # 80% Buy (Random Mode Warm Start)
                     holding = True
                     # Buy Cost: Entry Price is 0.5% higher
                     entry_price = p_t * 1.005
+                    entry_week_id = week_ids[i]
                     # Equity Impact: Immediate 0.5% loss on buy
                     current_capital *= 0.995 
                     equity_curve[i] = current_capital # Update current step equity
@@ -115,10 +130,15 @@ def apply_rules_and_sim(df):
             
             should_sell = False
             
-            if force_sell_cond[i]:
+            # Immediate Cancel Check (Same Week & No Buy Signal) - v-Final Spec
+            curr_week = week_ids[i]
+            is_same_week = (curr_week == entry_week_id)
+            immediate_cancel = is_same_week and (not buy_opp_vals[i])
+            
+            if force_sell_vals[i] or immediate_cancel:
                 should_sell = True
-                actions[i] = 3
-            elif sell_opp[i]:
+                actions[i] = 3 # Force Sell
+            elif sell_opp_vals[i]:
                 # Random Sell (0.2 Prob)
                 if random.random() < 0.2:
                     should_sell = True
@@ -137,6 +157,9 @@ def apply_rules_and_sim(df):
             else:
                 # Sparse Reward: Holding = 0
                 rewards[i] = 0.0
+
+    # SCALE REWARDS by 5.0 (v-Final Spec)
+    rewards = rewards * 5.0
 
     return watch_period, buy_opp, sell_opp, actions, rewards, equity_curve
 
@@ -188,7 +211,7 @@ def plot_symbol(symbol):
     
     ax2 = ax1.twinx()
     # Plot Reward
-    ax2.plot(df['ts'], rewards.cumsum(), color='blue', linestyle='--', alpha=0.6, label='Cum Reward (Model)')
+    ax2.plot(df['ts'], rewards.cumsum(), color='blue', linestyle='--', alpha=0.6, label='Cum Reward (Model x5)')
     # Plot Equity
     final_eq = equity[-1]
     ax2.plot(df['ts'], equity, color='purple', linewidth=2, label=f'Equity (Final: {final_eq:.2f})')
@@ -198,7 +221,7 @@ def plot_symbol(symbol):
     ax2.set_ylabel('Metrics')
     ax2.legend(loc='upper right')
     
-    plt.title(f"Sim Check: {symbol} | Final Equity: {final_eq:.2f}")
+    plt.title(f"Sim Check: {symbol} | Final Equity: {final_eq:.2f} | Rew Scaled x5")
     plt.savefig(OUTPUT_DIR / f"{symbol}_check.png")
     plt.close()
     print(f"Saved visualization for {symbol}")
@@ -222,5 +245,5 @@ if __name__ == "__main__":
         print("Done.")
     else:
         print("Usage:")
-        print("  python preprocessing/08_visualize_rules.py <symbol>   # Generate for one symbol")
-        print("  python preprocessing/08_visualize_rules.py --all      # Generate for ALL symbols")
+        print("  python preprocessing/visualize_rules.py <symbol>   # Generate for one symbol")
+        print("  python preprocessing/visualize_rules.py --all      # Generate for ALL symbols")

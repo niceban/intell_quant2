@@ -74,12 +74,21 @@ class VectorizedTradingEnvGPU:
         new_sym_idxs = torch.randint(0, self.num_symbols, (n,), device=self.device)
         self.env_symbol_idx[env_indices] = new_sym_idxs
         
-        for i, e_idx in enumerate(env_indices):
-            s_idx = new_sym_idxs[i]
-            max_s = int(self.data_lengths[s_idx].item()) - 30 
-            start = 25
-            if max_s <= start: max_s = start + 1
-            self.env_current_step[e_idx] = random.randint(start, max_s)
+        # Vectorized reset of current step
+        s_idxs = new_sym_idxs
+        max_s_vals = self.data_lengths[s_idxs] - 30
+        start = 25
+        
+        # Ensure max_s >= start + 1 (equivalent to if max_s <= start: max_s = start + 1)
+        # We want the upper bound of the range (inclusive) to be at least 26.
+        max_s_vals = torch.clamp(max_s_vals, min=start + 1)
+        
+        # Generate random steps in range [start, max_s_vals] (inclusive)
+        # width = max - min + 1
+        range_widths = (max_s_vals - start + 1).float()
+        offsets = (torch.rand(n, device=self.device) * range_widths).long()
+        
+        self.env_current_step[env_indices] = start + offsets
             
         self.env_pos[env_indices] = 0.0
         self.env_entry_price[env_indices] = 0.0

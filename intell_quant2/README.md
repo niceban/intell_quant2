@@ -1,6 +1,6 @@
 # IntellQuant 2.0: High-Performance RL Trading System (v-Final)
 
-**IntellQuant 2.0** 是一个基于深度强化学习的工业级量化交易框架。本项目采用了 **LSTM-DDDQN** 架构，支持双 GPU 并行参数搜索（Random Search），并建立了一套严苛的非线性评价体系。
+**IntellQuant 2.0** 是一个基于深度强化学习的工业级量化交易框架。本项目采用了 **LSTM-DDDQN** (Standard DQN + Dueling + Dual-Head) 架构，支持双 GPU 并行参数搜索（Random Search），并建立了一套严苛的非线性评价体系。
 
 ---
 
@@ -8,7 +8,7 @@
 
 ### 1. 交易规则 (Action Masking)
 *   **买入**: `月线关注期` (全多头 or DEA+AMA) **AND** `周线 SKDJ 金叉 (State 2)`。
-*   **卖出**: `持仓` **AND** `周线 SKDJ 死叉 (State -2)`。
+*   **卖出**: `持仓` **AND** (`SKDJ 死叉` **OR** `DEA 死叉` **OR** `MACD 全水下`)。
 *   **强制风控 (6 线全负)**: `持仓` **AND** (周线 SKDJ_D, SKDJ_K, MACD_DIF, MACD_DEA, MACD_BAR, AMA 全部 < 0)。
 
 ### 2. 交易摩擦 (Transaction Costs)
@@ -20,6 +20,7 @@
 $$R_{\text{pos}} = \sqrt{1 + \text{Ret}} - 1 + \text{Days}^{0.33} \times \text{AvgRet} - \text{MaxDD}$$
 $$R_{\text{neg}} = -(1 - \text{Ret})^2 + 1 + \text{Days}^{0.33} \times \text{AvgRet} - \text{MaxDD}$$
 *   **特性**: 根号压缩暴利，平方放大亏损，严惩慢牛，鼓励高效捕捉。
+*   **缩放 (Scaling)**: 环境内部奖励与特征 diff 均包含 **5.0 倍** 放大系数。
 
 ---
 
@@ -42,14 +43,20 @@ $$R_{\text{neg}} = -(1 - \text{Ret})^2 + 1 + \text{Days}^{0.33} \times \text{Avg
 
 ## 🚀 模块使用
 
-### 1. 启动 Random Search (双卡并行)
+### 1. 启动单进程训练 (v-Final Spec)
+```bash
+python exploring/single_process_test.py
+```
+*   默认使用 `v3_hybrid_reward_final` 实验名。
+*   结果保存在 `experiments/` 目录下。
+
+### 2. 启动 Random Search (双卡并行)
 ```bash
 python random_search/run_search.py
 ```
 *   自动利用 `cuda:0` 和 `cuda:1`。
-*   结果保存在 `experiments/random_search_TIMESTAMP/`。
 
-### 2. 监控看板
+### 3. 监控看板
 ```bash
 ./monitor_search.sh
 ```
@@ -58,8 +65,8 @@ python random_search/run_search.py
 ---
 
 ## 📂 项目结构
+*   `exploring/single_process_test.py`: **核心训练脚本** (v-Final Spec)。
 *   `exploring/rl/env.py`: 核心环境，包含风控、成本与奖励逻辑。
 *   `random_search/`: 独立搜索模块，包含调度器与 Worker。
-*   `preprocessing/visualize_rules.py`: 单股规则验证工具。
+*   `preprocessing/visualize_rules.py`: 单股规则验证工具 (已同步 v-Final 逻辑)。
 *   `deploy_and_run.sh`: 一键同步代码并启动远程任务。
-*   `stop_remote.sh`: 一键强力清理远程 GPU 残留进程。

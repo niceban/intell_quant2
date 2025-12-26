@@ -28,7 +28,7 @@ echo "=================================================================="
 
 # 3. Run with nohup, redirecting ALL output to the experiment folder
 # "$@" passes all remaining arguments to the python script
-nohup python -u exploring/train/train_loop.py --exp_name "$EXP_NAME" --exp_dir "$EXP_DIR" "$@" > "${EXP_DIR}/experiment.log" 2>&1 &
+nohup python -u exploring/single_process_test.py --exp_name "$EXP_NAME" --exp_dir "$EXP_DIR" "$@" > "${EXP_DIR}/experiment.log" 2>&1 &
 
 PID=$!
 

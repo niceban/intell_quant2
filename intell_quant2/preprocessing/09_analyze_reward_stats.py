@@ -72,8 +72,8 @@ def simulate_full_features(df):
     
     eps = 1e-8
     
-    prev_rew = 0.0
-    prev_d1 = 0.0
+    prev_rew_scaled = 0.0
+    prev_d1_unscaled = 0.0
 
     for i in range(n - 1):
         p_t = prices[i]
@@ -91,8 +91,8 @@ def simulate_full_features(df):
         current_rew = 0
         
         if not holding:
-            prev_rew = 0.0
-            prev_d1 = 0.0
+            prev_rew_scaled = 0.0
+            prev_d1_unscaled = 0.0
             
             if buy_opp_vals[i]:
                 # Random Mode: 0.8 Buy Prob
@@ -107,11 +107,11 @@ def simulate_full_features(df):
                     
                     # Buy Exec: Reward = Term
                     current_rew = term_reward
-                    buy_exec_list.append(current_rew)
+                    buy_exec_list.append(current_rew * 5.0) # Scale x5
                 else:
                     # Buy Miss: Reward = Term * -0.5
                     current_rew = -term_reward * 0.5
-                    buy_miss_list.append(current_rew)
+                    buy_miss_list.append(current_rew * 5.0) # Scale x5
             else:
                 current_rew = 0
         else:
@@ -134,14 +134,29 @@ def simulate_full_features(df):
             
             state_holding_list.append(raw_holding_rew)
             
-            # Diff Calc based on RAW holding reward
-            d1 = raw_holding_rew - prev_rew
-            d2 = d1 - prev_d1
-            if hold_days > 1: d1_list.append(d1)
-            if hold_days > 2: d2_list.append(d2)
+            # --- Feature Diff Logic (Matching Env) ---
+            # Env stores LastReward as Raw * 5.0
+            curr_rew_scaled = raw_holding_rew * 5.0
             
-            prev_rew = raw_holding_rew
-            prev_d1 = d1
+            # d1_unscaled = LastRew_t - LastRew_{t-1} (Both are x5 scaled)
+            # So d1_unscaled is RawDiff * 5.0
+            d1_unscaled = curr_rew_scaled - prev_rew_scaled
+            
+            # d2_unscaled = d1_unscaled_{t-1}
+            # This is "m_1 - m_2" in Env
+            d2_unscaled = prev_d1_unscaled
+            
+            # Final Feature: d1_scaled = d1_unscaled * 5.0 (Total x25)
+            d1_final = d1_unscaled * 5.0
+            
+            # Final Feature: d2_scaled = d2_unscaled * 5.0 (Total x25)
+            d2_final = d2_unscaled * 5.0
+            
+            if hold_days > 1: d1_list.append(d1_final)
+            if hold_days > 2: d2_list.append(d2_final)
+            
+            prev_rew_scaled = curr_rew_scaled
+            prev_d1_unscaled = d1_unscaled
             
             should_sell = False
             
@@ -156,18 +171,18 @@ def simulate_full_features(df):
                 # Force Sell is an Executed Sell
                 # Reward = Term + Raw Holding
                 current_rew = term_reward + raw_holding_rew
-                sell_exec_list.append(current_rew)
+                sell_exec_list.append(current_rew * 5.0) # Scale x5
                 
             elif sell_opp_vals[i]:
                 # Random Mode: 0.2 Sell Prob
                 if random.random() < 0.2:
                     should_sell = True
                     current_rew = term_reward + raw_holding_rew
-                    sell_exec_list.append(current_rew)
+                    sell_exec_list.append(current_rew * 5.0) # Scale x5
                 else:
                     # Sell Miss: Reward = Term * 2.0
                     current_rew = term_reward * 2.0
-                    sell_miss_list.append(current_rew)
+                    sell_miss_list.append(current_rew * 5.0) # Scale x5
                 
             if should_sell:
                 holding = False
@@ -181,7 +196,7 @@ def simulate_full_features(df):
     return {
         "buy_exec": buy_exec_list,
         "buy_miss": buy_miss_list,
-        "state_holding": state_holding_list, # Renamed to emphasize it's not RL reward
+        "state_holding": state_holding_list, # Not scaled, just raw values for ref
         "sell_exec": sell_exec_list,
         "sell_miss": sell_miss_list,
         "d1_rew": d1_list,
@@ -190,9 +205,13 @@ def simulate_full_features(df):
 
 def main():
     all_files = list(DATA_DIR.glob("*.duckdb"))
+    if not all_files:
+        print("No Data Found.")
+        return
+        
     samples = random.sample(all_files, min(100, len(all_files)))
     
-    print(f"Analyzing REWARDS & DIFFS across {len(samples)} files (Sniper Logic)...")
+    print(f"Analyzing REWARDS (x5) & DIFFS (x25) across {len(samples)} files (Sniper Logic)...")
     
     aggregated = {
         "buy_exec": [], "buy_miss": [], "state_holding": [], "sell_exec": [], "sell_miss": [],

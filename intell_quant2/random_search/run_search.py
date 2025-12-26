@@ -28,7 +28,7 @@ def sample_hyperparams(exp_id):
     else:
         gamma = round(np.random.uniform(0.5, 1), 2)
         
-    batch_size = random.choice([1024, 2048])
+    batch_size = random.choice([4096])#2048, 3072, 
     buffer_size = random.choice([100000, 500000]) # Smaller buffer for faster turnover
     tau = random.choice([0.001, 0.005, 0.01])
     
@@ -37,7 +37,7 @@ def sample_hyperparams(exp_id):
     if random.random() < 0.01:
         head_hidden_dim = 0
     else:
-        head_hidden_dim = random.choice([128, 256])
+        head_hidden_dim = random.choice([128, 256, 512])
     
     # Name format: exp_01_lr_1e-05_gm_0.85_bs_1024_bf_100k_hd_128
     exp_name = f"exp_{exp_id:02d}_lr_{lr:.1e}_gm_{gamma}_bs_{batch_size}_bf_{buffer_size}_hd_{head_hidden_dim}"
