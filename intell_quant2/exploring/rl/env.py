@@ -283,9 +283,9 @@ class VectorizedTradingEnvGPU:
         rewards[act_buy] = term_rew[act_buy]
         
         # Valid Holding or Sell Execution
-        # 1. Sell Exec: Term + Cumulative Holding PnL
+        # 1. Sell Exec: PnL - Term (Reward for securing profit AND avoiding risk / sacrificing opportunity)
         act_sell = (final_actions == 2)
-        rewards[act_sell] = term_rew[act_sell] + raw_holding_rew[act_sell]
+        rewards[act_sell] = raw_holding_rew[act_sell] - term_rew[act_sell]
         
         # 2. Holding (Action=0, Pos=1): Reward = 0.0 (Sparse)
         # We strictly DO NOT assign raw_holding_rew here for RL.

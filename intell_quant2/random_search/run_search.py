@@ -22,15 +22,25 @@ SEARCH_DIR.mkdir(parents=True, exist_ok=True)
 def sample_hyperparams(exp_id):
     # LogUniform sampling for LR
     lr = 10 ** np.random.uniform(-6, -4) 
-    # NEW: Lower gamma range for finance noise [0.5, 0.95]
-    # Round gamma to 2 decimal places for cleaner logs
-    gamma = round(np.random.uniform(0.5, 1), 2)
+    # NEW: 80% chance gamma=0, 20% chance normal range
+    if random.random() < 0.8:
+        gamma = 0.0
+    else:
+        gamma = round(np.random.uniform(0.5, 1), 2)
+        
     batch_size = random.choice([1024, 2048])
     buffer_size = random.choice([100000, 500000]) # Smaller buffer for faster turnover
     tau = random.choice([0.001, 0.005, 0.01])
     
-    # Name format: exp_01_lr_1e-05_gm_0.85_bs_1024_bf_100k
-    exp_name = f"exp_{exp_id:02d}_lr_{lr:.1e}_gm_{gamma}_bs_{batch_size}_bf_{buffer_size}"
+    # Architecture Search: Head Complexity
+    # 30% Light (0), 70% Heavy (128/256)
+    if random.random() < 0.3:
+        head_hidden_dim = 0
+    else:
+        head_hidden_dim = random.choice([128, 256])
+    
+    # Name format: exp_01_lr_1e-05_gm_0.85_bs_1024_bf_100k_hd_128
+    exp_name = f"exp_{exp_id:02d}_lr_{lr:.1e}_gm_{gamma}_bs_{batch_size}_bf_{buffer_size}_hd_{head_hidden_dim}"
     
     return {
         "exp_name": exp_name,
@@ -38,6 +48,7 @@ def sample_hyperparams(exp_id):
         "gamma": gamma,
         "batch_size": batch_size,
         "buffer_size": buffer_size,
+        "head_hidden_dim": head_hidden_dim,
         "tau": tau
     }
 
@@ -84,11 +95,12 @@ VAL METRICS: ATR=AvgTradeRet, MKR=MarketRet, Win=WinRate, PF=ProfitFactor,
                     "--exp_name", params["exp_name"],
                     "--gpu_id", str(gpu_id),
                     "--monitor_file", str(MONITOR_FILE),
-                    "--lr", str(params["lr"]),
-                    "--gamma", str(params["gamma"]),
-                    "--batch_size", str(params["batch_size"]),
-                    "--buffer_size", str(params["buffer_size"]),
-                    "--tau", str(params["tau"]),
+                    "--lr", str(params["lr"]), 
+                    "--gamma", str(params["gamma"]), 
+                    "--batch_size", str(params["batch_size"]), 
+                    "--buffer_size", str(params["buffer_size"]), 
+                    "--head_hidden_dim", str(params["head_hidden_dim"]), 
+                    "--tau", str(params["tau"]), 
                     # Reduce duration for search
                     "--max_steps", "200000" # 200k blocks = ~4M steps? No, 200k * 20 = 4M steps.
                                             # Let's do smaller: 50k blocks = 1M steps.

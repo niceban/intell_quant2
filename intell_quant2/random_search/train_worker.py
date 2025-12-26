@@ -37,6 +37,7 @@ def get_args():
     # Fixed or Less Tuned
     parser.add_argument("--num_envs", type=int, default=1024)
     parser.add_argument("--buffer_size", type=int, default=1000000)
+    parser.add_argument("--head_hidden_dim", type=int, default=128)
     parser.add_argument("--lookback", type=int, default=20)
     parser.add_argument("--num_episodes", type=int, default=5000000) # Max steps cap
     parser.add_argument("--warm_start_steps", type=int, default=1000)
@@ -178,7 +179,7 @@ METRICS LEGEND (指标说明):
     train_env = VectorizedTradingEnvGPU(train_bundle, device=device, lookback_window=args.lookback, num_envs=args.num_envs)
     val_env = VectorizedTradingEnvGPU(val_bundle, device=device, lookback_window=args.lookback, num_envs=args.num_envs)
     
-    agent = DQNAgent(input_dim=train_env.state_dim, action_dim=3, device=device, buffer_size=args.buffer_size, batch_size=args.batch_size, tau=args.tau, lr=args.lr, gamma=args.gamma)
+    agent = DQNAgent(input_dim=train_env.state_dim, action_dim=3, device=device, buffer_size=args.buffer_size, batch_size=args.batch_size, tau=args.tau, lr=args.lr, gamma=args.gamma, head_hidden_dim=args.head_hidden_dim)
     
     # Warm Start
     print(f"Pre-filling (Random Mode)...", flush=True)

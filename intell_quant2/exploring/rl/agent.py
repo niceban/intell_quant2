@@ -181,11 +181,14 @@ class EvolutionaryBufferGPU:
         self.scores[indices] = td_errors.squeeze() + comp + 1e-5
 
 class DQNAgent:
-    def __init__(self, input_dim, action_dim, lr=2e-5, gamma=0.99, buffer_size=100000, batch_size=1024, device="cpu", tau=0.005):
+    def __init__(self, input_dim, action_dim, lr=2e-5, gamma=0.99, buffer_size=100000, batch_size=1024, device="cpu", tau=0.005, head_hidden_dim=128):
         self.device = torch.device(device); self.tau = tau; self.batch_size = batch_size; self.gamma = gamma
-        self.policy_net = LSTM_DDDQN(input_dim, action_dim).to(self.device)
-        self.target_net = LSTM_DDDQN(input_dim, action_dim).to(self.device)
+        
+        # Dual-Head Model
+        self.policy_net = LSTM_DDDQN(input_dim, action_dim, head_hidden_dim=head_hidden_dim).to(self.device)
+        self.target_net = LSTM_DDDQN(input_dim, action_dim, head_hidden_dim=head_hidden_dim).to(self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict()); self.target_net.eval()
+        
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
         self.memory = EvolutionaryBufferGPU(capacity=buffer_size, device=self.device)
         self.epsilon = 1.0; self.epsilon_min = 0.05; self.epsilon_decay = 0.9995 
@@ -195,32 +198,121 @@ class DQNAgent:
 
     def select_action(self, state, eval_mode=False):
         if not eval_mode and random.random() < self.epsilon:
+            # Random action: This should ideally follow the Unified Random Logic (0.8 buy, 0.2 sell)
+            # But here we just return a placeholder, the Env will override it in Random Mode.
+            # However, for consistency, let's return a valid random action range.
             if state.ndim == 3: return torch.randint(0, 3, (state.size(0),), device=self.device)
             return random.randrange(3)
+            
         with torch.no_grad():
             st = state if isinstance(state, torch.Tensor) else torch.as_tensor(state, device=self.device, dtype=torch.float32)
             if st.ndim == 2: st = st.unsqueeze(0)
-            q = self.policy_net(st)
-            return q.argmax(dim=-1) if state.ndim == 3 else q.argmax().item()
+            
+            # Forward Dual Heads
+            q_entry, q_exit = self.policy_net(st)
+            
+            # Extract Pos from state (Batch, Sequence, Features) -> Last step, Index 20
+            # Account features start at index 20. Pos is the first one.
+            current_pos = st[:, -1, 20]
+            
+            # Select Action based on Pos
+            # Pos=0 -> Entry Head (0:Wait, 1:Buy) -> Global (0, 1)
+            # Pos=1 -> Exit Head (0:Hold, 1:Sell) -> Global (0, 2)
+            
+            actions = torch.zeros(st.size(0), dtype=torch.long, device=self.device)
+            
+            # Entry Logic
+            empty_mask = (current_pos < 0.5)
+            if empty_mask.any():
+                act_entry = q_entry[empty_mask].argmax(dim=1) # 0 or 1
+                actions[empty_mask] = act_entry
+                
+            # Exit Logic
+            hold_mask = (current_pos >= 0.5)
+            if hold_mask.any():
+                act_exit = q_exit[hold_mask].argmax(dim=1) # 0 or 1
+                # Map 1 (Sell) to Global 2
+                global_act_exit = torch.where(act_exit == 1, torch.tensor(2, device=self.device), torch.tensor(0, device=self.device))
+                actions[hold_mask] = global_act_exit
+                
+            return actions if state.ndim == 3 else actions.item()
             
     def update(self):
         if len(self.memory) < self.batch_size: return None
         (states, actions, rewards, next_states, dones), indices = self.memory.sample(self.batch_size)
+        
+        # 1. Get Current Q (Dual Head)
+        curr_q_entry, curr_q_exit = self.policy_net(states)
+        
+        # Determine which head applies to which sample
+        # Using 'actions' to infer is risky because Action 0 is ambiguous (Wait or Hold).
+        # Must use 'states' Pos info.
+        current_pos = states[:, -1, 20]
+        empty_mask = (current_pos < 0.5)
+        hold_mask = (current_pos >= 0.5)
+        
+        # Gather Q values corresponding to taken actions
+        # Entry: Action 0 or 1. Gather directly.
+        # Exit: Action 0 or 2. Map 2->1 for gather.
+        
+        q_pred = torch.zeros_like(rewards)
+        
+        # Entry Part
+        if empty_mask.any():
+            # Actions should be 0 or 1
+            act_entry = actions[empty_mask]
+            q_pred[empty_mask] = curr_q_entry[empty_mask].gather(1, act_entry.unsqueeze(1)).squeeze(1)
+            
+        # Exit Part
+        if hold_mask.any():
+            # Actions should be 0 or 2. Map 2->1.
+            act_exit = actions[hold_mask]
+            act_exit_mapped = (act_exit == 2).long()
+            q_pred[hold_mask] = curr_q_exit[hold_mask].gather(1, act_exit_mapped.unsqueeze(1)).squeeze(1)
+
+        # 2. Get Target Q (Dual Head)
         with torch.no_grad():
-            na = self.policy_net(next_states).argmax(1, keepdim=True)
-            target_q = rewards.unsqueeze(1) + (~dones).float().unsqueeze(1) * self.gamma * self.target_net(next_states).gather(1, na)
-        current_q = self.policy_net(states).gather(1, actions.unsqueeze(1))
-        diff = current_q - target_q
+            next_q_entry, next_q_exit = self.target_net(next_states)
+            # Route based on NEXT state pos
+            next_pos = next_states[:, -1, 20]
+            next_empty_mask = (next_pos < 0.5)
+            next_hold_mask = (next_pos >= 0.5)
+            
+            # Double DQN Logic: Use Policy Net to select action, Target Net to eval
+            # But for simplicity and stability with dual heads, let's stick to Max Q first.
+            # Or Double DQN:
+            # next_act_entry = self.policy_net(next_states)[0].argmax(1)
+            # ...
+            # Let's use Standard DQN Max for now to reduce complexity risks in this major refactor.
+            
+            max_next_q = torch.zeros_like(rewards)
+            
+            if next_empty_mask.any():
+                max_next_q[next_empty_mask] = next_q_entry[next_empty_mask].max(1)[0]
+            
+            if next_hold_mask.any():
+                max_next_q[next_hold_mask] = next_q_exit[next_hold_mask].max(1)[0]
+                
+            target_q = rewards + (~dones).float() * self.gamma * max_next_q
+
+        # 3. Loss
+        diff = q_pred - target_q
         td_errors = torch.abs(diff).detach()
         self.memory.update_priorities(indices, td_errors)
-        loss = F.smooth_l1_loss(current_q, target_q)
-        self.optimizer.zero_grad(); loss.backward(); torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), 1.0)
-        self.optimizer.step(); self.soft_update()
         
-        q_min = current_q.min().detach()
-        q_max = current_q.max().detach()
+        loss = F.smooth_l1_loss(q_pred, target_q)
         
-        return {'loss': loss, 'mean_q': current_q.mean().detach(), 'min_q': q_min, 'max_q': q_max, 'mean_err': td_errors.mean()}
+        self.optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), 1.0)
+        self.optimizer.step()
+        self.soft_update()
+        
+        # Stats
+        q_min = q_pred.min().detach()
+        q_max = q_pred.max().detach()
+        
+        return {'loss': loss, 'mean_q': q_pred.mean().detach(), 'min_q': q_min, 'max_q': q_max, 'mean_err': td_errors.mean()}
     
     def soft_update(self):
         for t, p in zip(self.target_net.parameters(), self.policy_net.parameters()):
