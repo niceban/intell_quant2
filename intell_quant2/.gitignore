@@ -1,0 +1,34 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+build/
+dist/
+eggs/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+
+# IDE/editor
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Checkpoints / notebooks
+.ipynb_checkpoints
+
+# Local data/output
+outputs/
+
+# OS
+.DS_Store
