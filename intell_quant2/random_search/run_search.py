@@ -33,8 +33,8 @@ def sample_hyperparams(exp_id):
     tau = random.choice([0.001, 0.005, 0.01])
     
     # Architecture Search: Head Complexity
-    # 30% Light (0), 70% Heavy (128/256)
-    if random.random() < 0.3:
+    # 1% Light (0), 99% Heavy (128/256) - Focus on Heavy based on initial results
+    if random.random() < 0.01:
         head_hidden_dim = 0
     else:
         head_hidden_dim = random.choice([128, 256])

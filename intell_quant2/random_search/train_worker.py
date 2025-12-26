@@ -390,12 +390,16 @@ METRICS LEGEND (指标说明):
                 factors = np.maximum(factors, 1e-6)
                 
                 # ATR (Geometric Mean per trade)
-                avg_trade_ret = np.exp(np.mean(np.log(factors))) - 1.0
+                sum_log_returns = np.sum(np.log(factors))
+                avg_trade_ret = np.exp(sum_log_returns / len(factors)) - 1.0
                 
-                # CRR (Cumulative Rate of Return for Agent)
-                # prod(1+r) - 1. Using sum(log) for stability
-                # exp(sum(log(factors))) - 1.0
-                crr_val = np.exp(np.sum(np.log(factors))) - 1.0
+                # SymCRR (Average Cumulative Return per Symbol/Env Slot)
+                # Assumes we ran num_envs parallel slots.
+                # Formula: (Product(1+r))^(1/num_envs) - 1
+                sym_crr = np.exp(sum_log_returns / args.num_envs) - 1.0
+                
+                # Total Return (Sum of simple returns)
+                total_ret = tr_arr.sum()
                 
                 win_rate = (tr_arr > 0).mean()
                 avg_hold_days = hd_arr.mean()
@@ -409,12 +413,12 @@ METRICS LEGEND (指标说明):
                 gross_loss = abs(tr_arr[tr_arr <= 0].sum())
                 pf = gross_win / (gross_loss + 1e-9)
             else:
-                win_rate=0; avg_trade_ret=0; avg_hold_days=0; daily_eff=0; sharpe=0; pf=0; max_dd=0; crr_val=0.0
+                win_rate=0; avg_trade_ret=0; avg_hold_days=0; daily_eff=0; sharpe=0; pf=0; max_dd=0; total_ret=0.0; sym_crr=0.0
             
             # Construct Monitor Message (Rich Information)
             monitor_msg = (
                 f"[{args.exp_name}|GPU:{args.gpu_id}] VAL @ {total_blocks} | "
-                f"ATR(Geom): {avg_trade_ret:.2%} | CRR: {crr_val:.2%} | MKR(Geom): {avg_market_ret:.2%} | "
+                f"ATR: {avg_trade_ret:.2%} | SymCRR: {sym_crr:.2%} | TotRet: {total_ret:.1f} | MKR: {avg_market_ret:.2%} | "
                 f"Win: {win_rate:.1%} | PF: {pf:.2f} | Shp: {sharpe:.2f} | "
                 f"AHD: {avg_hold_days:.1f} | EFF: {daily_eff:.3%} | Trd: {n_trades}"
             )
@@ -422,9 +426,9 @@ METRICS LEGEND (指标说明):
             log_to_monitor(args.monitor_file, monitor_msg)
             
             # Global Leaderboard (CSV)
-            # Add CRR to CSV
-            csv_header = "ExpName,GPU,Block,Score,AvgTradeRet,CRR,MarketRet,WinRate,PF,Sharpe,AvgHoldDays,Efficiency,Trades,Timestamp\n"
-            csv_line = f"{args.exp_name},{args.gpu_id},{total_blocks},{val_score:.4f},{avg_trade_ret:.4f},{crr_val:.4f},{avg_market_ret:.4f},{win_rate:.4f},{pf:.4f},{sharpe:.4f},{avg_hold_days:.2f},{daily_eff:.6f},{n_trades},{datetime.now()}\n"
+            # Replace CRR/TotRet with SymCRR
+            csv_header = "ExpName,GPU,Block,Score,AvgTradeRet,SymCRR,MarketRet,WinRate,PF,Sharpe,AvgHoldDays,Efficiency,Trades,Timestamp\n"
+            csv_line = f"{args.exp_name},{args.gpu_id},{total_blocks},{val_score:.4f},{avg_trade_ret:.4f},{sym_crr:.4f},{avg_market_ret:.4f},{win_rate:.4f},{pf:.4f},{sharpe:.4f},{avg_hold_days:.2f},{daily_eff:.6f},{n_trades},{datetime.now()}\n"
             
             global_csv = search_root / "leaderboard.csv"
             if not global_csv.exists():

@@ -333,11 +333,14 @@ METRICS LEGEND (指标说明):
                 factors = np.maximum(factors, 1e-6)
                 
                 # ATR (Geometric Mean per trade)
-                avg_trade_ret = np.exp(np.mean(np.log(factors))) - 1.0
+                sum_log_returns = np.sum(np.log(factors))
+                avg_trade_ret = np.exp(sum_log_returns / len(factors)) - 1.0
                 
-                # CRR (Cumulative Rate of Return for Agent)
-                # prod(1+r) - 1. Using sum(log) for stability
-                crr_val = np.exp(np.sum(np.log(factors))) - 1.0
+                # SymCRR (Average Cumulative Return per Symbol/Env Slot)
+                sym_crr = np.exp(sum_log_returns / args.num_envs) - 1.0
+                
+                # Total Return (Sum of simple returns)
+                total_ret = tr_arr.sum()
                 
                 win_rate = (tr_arr > 0).mean()
                 avg_hold_days = hd_arr.mean()
@@ -351,9 +354,9 @@ METRICS LEGEND (指标说明):
                 gross_loss = abs(tr_arr[tr_arr <= 0].sum())
                 pf = gross_win / (gross_loss + 1e-9)
             else:
-                win_rate=0; avg_trade_ret=0; avg_hold_days=0; daily_eff=0; sharpe=0; pf=0; max_dd=0; crr_val=0.0
+                win_rate=0; avg_trade_ret=0; avg_hold_days=0; daily_eff=0; sharpe=0; pf=0; max_dd=0; total_ret=0.0; sym_crr=0.0
             
-            print(f"--- VAL @ {total_blocks} | ATR(Geom): {avg_trade_ret:.2%} | CRR: {crr_val:.2%} | MKR(Geom): {avg_market_ret:.2%} | Win: {win_rate:.1%} | PF: {pf:.2f} | Shp: {sharpe:.2f} | AHD: {avg_hold_days:.1f} | EFF: {daily_eff:.3%} | Trd: {n_trades} ---", flush=True)
+            print(f"--- VAL @ {total_blocks} | ATR: {avg_trade_ret:.2%} | SymCRR: {sym_crr:.2%} | TotRet: {total_ret:.1f} | MKR: {avg_market_ret:.2%} | Win: {win_rate:.1%} | PF: {pf:.2f} | Shp: {sharpe:.2f} | AHD: {avg_hold_days:.1f} | EFF: {daily_eff:.3%} | Trd: {n_trades} ---", flush=True)
             
             if avg_trade_ret > best_val_score:
                 best_val_score = avg_trade_ret
