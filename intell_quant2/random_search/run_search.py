@@ -26,7 +26,10 @@ def sample_hyperparams(exp_id):
     if random.random() < 0.8:
         gamma = 0.0
     else:
-        gamma = round(np.random.uniform(0.5, 1), 2)
+        # Prevent round(0.99x, 2) -> 1.0 case
+        raw_gamma = np.random.uniform(0.5, 0.99)
+        gamma = round(raw_gamma, 2)
+        gamma = min(0.99, gamma) # Double safety
         
     batch_size = random.choice([4096])#2048, 3072, 
     buffer_size = random.choice([100000, 500000]) # Smaller buffer for faster turnover

@@ -3,9 +3,11 @@ import random
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
-from .model import LSTM_DDDQN
+from model_debug import LSTM_DDDQN
 
 class EvolutionaryBufferGPU:
+    # ... (rest of the class remains same, assume it's copied)
+
     def __init__(self, capacity, device, alpha=0.6):
         self.capacity = capacity
         self.device = torch.device(device)
@@ -182,11 +184,7 @@ class EvolutionaryBufferGPU:
 
 class DQNAgent:
     def __init__(self, input_dim, action_dim, lr=2e-5, gamma=0.99, buffer_size=100000, batch_size=1024, device="cpu", tau=0.005, head_hidden_dim=128):
-        self.device = torch.device(device); self.tau = tau; self.batch_size = batch_size
-        
-        # GLOBAL OVERRIDE: Sniper design requires GAMMA=0 (Supervised Mode)
-        self.gamma = 0.0
-        assert self.gamma < 1.0, "Gamma must be < 1.0 to prevent Q-value explosion!"
+        self.device = torch.device(device); self.tau = tau; self.batch_size = batch_size; self.gamma = gamma
         
         # Dual-Head Model
         self.policy_net = LSTM_DDDQN(input_dim, action_dim, head_hidden_dim=head_hidden_dim).to(self.device)
@@ -302,6 +300,19 @@ class DQNAgent:
         # 3. Loss
         diff = q_pred - target_q
         td_errors = torch.abs(diff).detach()
+        
+        # --- HEAVY DEBUG PROBE ---
+        if random.random() < 0.01: # 1% sample rate for logs
+            with torch.no_grad():
+                p_norm = torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), 100.0)
+                w_norm = sum(p.norm().item() for p in self.policy_net.parameters())
+                print(f"\n[DEBUG AGENT] Target Range: {target_q.min().item():.1f} to {target_q.max().item():.1f}")
+                print(f"[DEBUG AGENT] Pred Range: {q_pred.min().item():.1f} to {q_pred.max().item():.1f}")
+                print(f"[DEBUG AGENT] Weight Norm: {w_norm:.1f} | Grad Norm (clipped): {p_norm:.2f}")
+                if q_pred.min() < -1000:
+                    print("!!! ALARM: Q-Values are diving deep !!!")
+        # -------------------------
+
         self.memory.update_priorities(indices, td_errors)
         
         loss = F.smooth_l1_loss(q_pred, target_q)

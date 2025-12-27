@@ -27,7 +27,7 @@ def get_args():
     parser.add_argument("--buffer_size", type=int, default=1000000)
     parser.add_argument("--batch_size", type=int, default=1024)
     parser.add_argument("--lr", type=float, default=2e-5)
-    parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument("--gamma", type=float, default=0.0)
     parser.add_argument("--tau", type=float, default=0.005)
     parser.add_argument("--lookback", type=int, default=20)
     parser.add_argument("--num_episodes", type=int, default=1000000)

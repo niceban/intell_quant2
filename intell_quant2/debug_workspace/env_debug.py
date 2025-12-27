@@ -286,25 +286,35 @@ class VectorizedTradingEnvGPU:
         rewards[missed_buy] = -term_rew[missed_buy] * 0.5 # Buy Miss Penalty Halved (Weighted 0.5)
         
         missed_sell = sell_opp & (self.env_pos == 1) & (final_actions == 0)
-        rewards[missed_sell] = term_rew[missed_sell] # NEW: Removed 0.5 multiplier
+        rewards[missed_sell] = term_rew[missed_sell] * 2.0 # Sell Miss Penalty Doubled (Weighted 2.0)
         
         act_buy = (final_actions == 1)
         rewards[act_buy] = term_rew[act_buy]
         
         # Valid Holding or Sell Execution
-        # 1. Sell Exec: Alpha-Enhanced PnL (落袋为安 + 避险奖励)
+        # 1. Sell Exec: PnL - Term (Reward for securing profit AND avoiding risk / sacrificing opportunity)
         act_sell = (final_actions == 2)
-        # rewards[act_sell] = raw_holding_rew[act_sell] # OLD: PnL only
-        rewards[act_sell] = torch.max(raw_holding_rew[act_sell] - term_rew[act_sell], raw_holding_rew[act_sell])
+        rewards[act_sell] = raw_holding_rew[act_sell] - term_rew[act_sell]
         
         # 2. Holding (Action=0, Pos=1): Reward = 0.0 (Sparse)
+        # We strictly DO NOT assign raw_holding_rew here for RL.
+        # But we DO keep raw_holding_rew in env_acc_history implicitly via env_last_reward? 
+        # Wait, env_last_reward is used for State Diffs. 
+        # Requirement: "Holding 期间... 用于计算14维特征".
+        # So we must update env_last_reward with raw_holding_rew even if we don't return it for RL?
+        # NO. "名义上的reward=0". So RL reward is 0. 
+        # But "用于计算d1_rew d2_rew".
+        # d1_rew = curr_rew - prev_rew. If we set curr_rew=0, d1 will be wrong (0 - prev).
+        # We need a separate tracker for "State Reward" vs "RL Reward".
+        # Actually, env_last_reward IS that tracker. 
+        # Current implementation of _update_account_history uses env_last_reward.
+        # So we should update env_last_reward with raw_holding_rew, BUT return 0 in 'rewards' tensor.
         
-        # FINAL SCALE & QUANTIZATION
-        rewards = self._quantize_reward(rewards * 5.0)
+        # FINAL SCALE: reward * 5.0 (Only apply to RL rewards)
+        rewards = rewards * 5.0
         
         # Update State
         mask_buy = (final_actions == 1)
-        # ... (rest of state update logic remains same)
         self.env_pos[mask_buy] = 1.0
         # Buy Cost: Entry Price = Price * 1.005
         self.env_entry_price[mask_buy] = prices[mask_buy] * 1.005 
@@ -334,24 +344,25 @@ class VectorizedTradingEnvGPU:
             done_idxs = dones.nonzero().squeeze(1)
             self._reset_indices(done_idxs)
         
+        # Critical: Update env_last_reward for State Construction (Feature Env)
+        # For Holding steps, we store the computed raw_holding_rew (so diffs are correct).
+        # For Buy/Sell steps, we store the Term Reward (or Term+Hold).
+        # Note: If we missed buy/sell, RL gets penalty, but State Reward should probably be 0? 
+        # Or should State Reward reflect the penalty? 
+        # Usually State Reward tracks "What happened to the account". 
+        # Miss penalties are fictitious RL signals. Account didn't change.
+        # So for Miss, State Reward should be 0.
+        # For Holding, State Reward should be raw_holding_rew.
+        # For Buy/Sell, State Reward should be Term/Real PnL.
+        
         state_rewards = torch.zeros_like(rewards)
-        state_rewards[mask_hold] = raw_holding_rew[mask_hold] 
+        state_rewards[mask_hold] = raw_holding_rew[mask_hold] # Real Holding PnL score
         state_rewards[mask_buy] = term_rew[mask_buy]
         state_rewards[mask_sell] = term_rew[mask_sell] + raw_holding_rew[mask_sell]
         
-        # Scaling & Quantization for State (consistent with previous *5.0 logic for state features)
-        self.env_last_reward.copy_(self._quantize_reward(state_rewards * 5.0))
+        # Scaling for State (consistent with previous *5.0 logic for state features)
+        self.env_last_reward.copy_(state_rewards * 5.0)
         
         self._update_account_history(self.env_range)
         
         return self._get_states(self.env_range), rewards, dones, final_actions
-
-    def _quantize_reward(self, r_tensor):
-        """Quantize rewards into discrete bins: [-5, -2, -1, -0.5, -0.2, 0, 0.2, 0.5, 1, 2, 5]"""
-        bins = torch.tensor([-5.0, -2.0, -1.0, -0.5, -0.2, 0.0, 0.2, 0.5, 1.0, 2.0, 5.0], device=self.device)
-        # Find the nearest bin for each reward
-        # diff: (N, 1) - (1, M) -> (N, M)
-        diff = torch.abs(r_tensor.unsqueeze(1) - bins.unsqueeze(0))
-        idx = diff.argmin(dim=1)
-        return bins[idx]
-
