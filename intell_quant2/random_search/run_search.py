@@ -30,6 +30,7 @@ def sample_hyperparams(exp_id):
         raw_gamma = np.random.uniform(0.5, 0.99)
         gamma = round(raw_gamma, 2)
         gamma = min(0.99, gamma) # Double safety
+        gamma = 0
         
     batch_size = random.choice([4096])#2048, 3072, 
     buffer_size = random.choice([100000, 500000]) # Smaller buffer for faster turnover
